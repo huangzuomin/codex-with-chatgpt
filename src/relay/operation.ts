@@ -1,9 +1,11 @@
 import { parseC2CMessage } from "../protocol/parser.js";
+import { RELAY_POLICY_LIMITS } from "./policy.js";
 import type { RelayRequest, RelayResult } from "./types.js";
 
 export interface RelayHost {
   open(conversationUrl?: string): Promise<string>;
   sendAndRead(instruction: string): Promise<string>;
+  recoverSession?(input: { bootPrompt: string; handoff: string }): Promise<string>;
 }
 
 const REPAIR = "[C2C] Return exactly one structured response with the requested STATE, TASK_ID, ITERATION, and required sections. Do not add prose.";
@@ -13,33 +15,35 @@ export async function runRelay(request: RelayRequest, host: RelayHost | null, co
   let url: string;
   try { url = await host.open(conversationUrl); } catch (error) {
     if (!isSessionMissing(error)) return fallback("NAVIGATION_FAILED", request.instruction);
-    try { url = await host.open(); } catch { return fallback("SESSION_NOT_FOUND", request.instruction); }
+    if (!host.recoverSession || !request.bootPrompt || !request.handoff) return fallback("SESSION_NOT_FOUND", request.instruction);
+    try { url = await host.recoverSession({ bootPrompt: request.bootPrompt, handoff: request.handoff }); } catch { return fallback("SESSION_NOT_FOUND", request.instruction); }
   }
   let retries = 0;
   let text: string;
   for (;;) {
     try { text = await host.sendAndRead(request.instruction); break; } catch {
-      if (retries >= 2) return fallback("RESPONSE_TIMEOUT", request.instruction);
+      if (retries >= RELAY_POLICY_LIMITS.browserRetries) return fallback("RESPONSE_TIMEOUT", request.instruction);
       retries++;
     }
   }
-    if (validShape(text, request)) return { ok: true, kind: "browser", text, conversationUrl: url };
-    if (retries === 0) {
-      try { text = await host.sendAndRead(REPAIR); } catch { return fallback("RESPONSE_MALFORMED", request.instruction); }
-      if (validShape(text, request)) return { ok: true, kind: "browser", text, conversationUrl: url };
-    }
-    return fallback("PROTOCOL_REPAIR_EXHAUSTED", request.instruction);
+  const classification = classify(text, request);
+  if (classification === "valid") return { ok: true, kind: "browser", text, conversationUrl: url };
+  if (classification === "semantic_error") return fallback("RESPONSE_MALFORMED", request.instruction);
+  try { text = await host.sendAndRead(REPAIR); } catch { return fallback("RESPONSE_MALFORMED", request.instruction); }
+  if (classify(text, request) === "valid") return { ok: true, kind: "browser", text, conversationUrl: url };
+  return fallback("PROTOCOL_REPAIR_EXHAUSTED", request.instruction);
 }
 
-function validShape(text: string, request: RelayRequest): boolean {
+type ResponseClassification = "valid" | "syntax_error" | "semantic_error";
+function classify(text: string, request: RelayRequest): ResponseClassification {
   const parsed = parseC2CMessage(text);
-  if (!parsed.ok) return false;
+  if (!parsed.ok) return "syntax_error";
   const message = parsed.message;
   const expectedIteration = message.state === "PLAN" ? request.iteration + 1 : request.iteration;
-  if (message.taskId !== request.taskId || message.iteration !== expectedIteration || !request.expectedStates.includes(message.state as "PLAN" | "DONE" | "BLOCKED")) return false;
-  if (message.state === "PLAN") return Boolean(message.sections.ACTIONS?.trim() && message.sections.TESTS?.trim() && message.sections.SUCCESS_CRITERIA?.trim());
-  if (message.state === "BLOCKED") return Boolean(message.sections.REASON?.trim());
-  return true;
+  if (message.taskId !== request.taskId || message.iteration !== expectedIteration || !request.expectedStates.includes(message.state as "PLAN" | "DONE" | "BLOCKED")) return "semantic_error";
+  if (message.state === "PLAN" && !(message.sections.ACTIONS?.trim() && message.sections.TESTS?.trim() && message.sections.SUCCESS_CRITERIA?.trim())) return "syntax_error";
+  if (message.state === "BLOCKED" && !message.sections.REASON?.trim()) return "syntax_error";
+  return "valid";
 }
 
 function fallback(errorCode: "BROWSER_UNAVAILABLE" | "NAVIGATION_FAILED" | "SESSION_NOT_FOUND" | "RESPONSE_TIMEOUT" | "RESPONSE_MALFORMED" | "PROTOCOL_REPAIR_EXHAUSTED", instruction: string): RelayResult {

@@ -200,8 +200,9 @@ chat per task or per Codex session.
      via MCP, so never paste files into the handoff.
   3. `c2c session set` with the new URL (this overwrites the old one).
 - If the saved chat 404s or was deleted, treat it as a switch: new chat + boot
-  prompt + HANDOFF reconstructed from `c2c session get` and recent
-  `execution_summary` records.
+  prompt + minimal HANDOFF constructed from authoritative current task/GitHub
+  state. Session metadata and execution records are advisory only and never
+  override TaskStore or the published repository state.
 
 ## Workflow: coding task（"使用 Codex with ChatGPT 完成 XXX"）
 
@@ -273,7 +274,7 @@ Please independently inspect the workspace and current git diff through MCP.
 
 Browser Relay is an optional control-plane convenience layer. Before any
 browser action, report the host's instantaneous capability:
-`c2c relay get -w <workspace> --browser-capability <available|unavailable> --json`.
+`c2c relay get -w <workspace> --browser-relay-capability <available|unavailable> --json`.
 Use the returned `effectiveKind` and policy limits; do not duplicate selection
 or retry rules in the Skill. `auto` safely selects Manual Relay when the
 official browser capability is unavailable. Preserve the complete original
@@ -285,6 +286,10 @@ browser. This release has no Node Browser adapter. Never use Playwright,
 Selenium, Puppeteer, DOM scraping, page HTML, cookies, tokens, or private
 ChatGPT APIs. If a visible login, CAPTCHA, 2FA, or consent screen appears,
 request exactly one user action and then continue.
+
+Only syntax/shape errors may receive one fixed protocol repair. Wrong task ID,
+iteration, or state goes directly to Manual Relay without a repair message.
+`c2c relay get` is the single source for relay selection and operational limits.
 
 ## Workflow: disconnect（"断开 ChatGPT"）
 

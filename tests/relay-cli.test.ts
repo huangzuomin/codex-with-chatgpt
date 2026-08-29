@@ -13,7 +13,7 @@ describe("relay CLI", () => {
     const root = makeTmpDir("relay-cli"); roots.push(root);
     const result = run(["relay", "get", "--browser-capability", "unavailable"], root);
     expect(result.status).toBe(0);
-    expect(JSON.parse(result.stdout)).toMatchObject({ requestedMode: "auto", effectiveKind: "manual", fallbackRequired: false, browserRetries: 0 });
+    expect(JSON.parse(result.stdout)).toMatchObject({ requestedMode: "auto", effectiveKind: "manual", fallbackRequired: false, limits: { browserRetries: 2, protocolRepairAttempts: 1, sessionRecoveryAttempts: 1 } });
   });
   it("persists only an explicit relay mode change", () => {
     const root = makeTmpDir("relay-cli-set"); roots.push(root);

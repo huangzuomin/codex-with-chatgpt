@@ -3,23 +3,24 @@ import path from "node:path";
 import type { Command } from "commander";
 import { getStateDir } from "../config/paths.js";
 import { selectRelay } from "../relay/select.js";
-import { initialRelayPolicy } from "../relay/policy.js";
+import { initialRelayPolicy, RELAY_POLICY_LIMITS } from "../relay/policy.js";
 import type { RelayMode } from "../relay/types.js";
 import { SessionStore } from "../session/store.js";
 import { Workspace } from "../workspace/manager.js";
 
 export function registerRelayCommands(program: Command, emitSuccess: (data: Record<string, unknown>, json: boolean) => void): void {
   const relay = program.command("relay").description("Select the ChatGPT control relay");
-  relay.command("get").option("-w, --workspace <path>").option("--browser-capability <capability>", "available | unavailable", "unavailable").option("--json", "machine-readable output", false)
-    .action((opts: { workspace?: string; browserCapability: string; json: boolean }) => {
+  relay.command("get").option("-w, --workspace <path>").option("--browser-relay-capability <capability>", "available | unavailable", "unavailable").option("--browser-capability <capability>", "legacy alias").option("--json", "machine-readable output", false)
+    .action((opts: { workspace?: string; browserRelayCapability?: string; browserCapability?: string; json: boolean }) => {
       const workspace = new Workspace(path.resolve(opts.workspace ?? process.cwd()));
       const mode = workspace.projectConfig.relay?.mode ?? "auto";
-      const browserAvailable = opts.browserCapability === "available";
-      if (opts.browserCapability !== "available" && opts.browserCapability !== "unavailable") throw new Error("Unknown browser capability.");
+      const capability = opts.browserRelayCapability ?? opts.browserCapability ?? "unavailable";
+      const browserAvailable = capability === "available";
+      if (capability !== "available" && capability !== "unavailable") throw new Error("Unknown browser relay capability.");
       const effectiveKind = selectRelay({ mode, browserAvailable });
       const policy = initialRelayPolicy();
       const saved = new SessionStore(workspace.id, getStateDir()).read();
-      emitSuccess({ requestedMode: mode, effectiveKind, ...policy, fallbackRequired: mode === "browser" && !browserAvailable, savedSession: saved ? { conversationUrl: saved.conversationUrl, title: saved.title } : null }, opts.json);
+      emitSuccess({ requestedMode: mode, effectiveKind, fallbackRequired: mode === "browser" && !browserAvailable, limits: RELAY_POLICY_LIMITS, counters: policy, savedSession: saved ? { conversationUrl: saved.conversationUrl, title: saved.title } : null }, opts.json);
     });
   relay.command("set").argument("<mode>", "auto | manual | browser").option("-w, --workspace <path>").option("--json", "machine-readable output", false)
     .action((mode: string, opts: { workspace?: string; json: boolean }) => {

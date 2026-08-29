@@ -17,6 +17,12 @@ export interface RelayPolicyState {
   fallbackRequired: boolean;
 }
 
+export interface RelayPolicyLimits {
+  readonly browserRetries: 2;
+  readonly protocolRepairAttempts: 1;
+  readonly sessionRecoveryAttempts: 1;
+}
+
 export interface RelayRequest {
   workspaceRoot: string;
   workspaceId: string;
@@ -24,6 +30,8 @@ export interface RelayRequest {
   iteration: number;
   instruction: string;
   expectedStates: Array<"PLAN" | "DONE" | "BLOCKED">;
+  bootPrompt?: string;
+  handoff?: string;
 }
 
 export type RelayResult =

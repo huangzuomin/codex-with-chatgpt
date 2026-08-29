@@ -18,4 +18,20 @@ describe("shared task import service", () => {
     const before = JSON.stringify(store.read()); const result = importTaskMessage(store, "STATE: PLAN\nTASK_ID: wrong\nITERATION: 1");
     expect(result.ok).toBe(false); expect(JSON.stringify(store.read())).toBe(before);
   });
+  it("keeps DONE pending and imports BLOCKED through the same service", () => {
+    const doneRoot = makeTmpDir("import-done"); const doneStore = new TaskStore(doneRoot); doneStore.write(base("EXECUTED"));
+    const done = importTaskMessage(doneStore, msg("DONE", 1).replace("ACTIONS:\nDo.\n\nTESTS:\nRun it.\n\nSUCCESS_CRITERIA:\nIt passes.", "SUMMARY:\nAccepted."));
+    expect(done.ok && done.snapshot).toMatchObject({ state: "EXECUTED", pendingDecision: { state: "DONE" } });
+    const blockedRoot = makeTmpDir("import-blocked"); const blockedStore = new TaskStore(blockedRoot); blockedStore.write(base());
+    const blocked = importTaskMessage(blockedStore, "[C2C]\nSTATE: BLOCKED\nTASK_ID: c2c_12345678\nITERATION: 0\n\nREASON:\nNeeds input.\n");
+    expect(blocked.ok && blocked.snapshot).toMatchObject({ state: "BLOCKED", blockedFrom: { code: "CHATGPT_BLOCKED" } });
+  });
+  it.each([
+    ["task id", msg("PLAN", 1).replace("c2c_12345678", "c2c_87654321")],
+    ["iteration", msg("PLAN", 2)],
+    ["transition", msg("DONE", 0)],
+  ])("leaves snapshot unchanged for invalid %s", (_name, text) => {
+    const root = makeTmpDir("import-invalid"); const store = new TaskStore(root); store.write(base()); const before = JSON.stringify(store.read());
+    expect(importTaskMessage(store, text).ok).toBe(false); expect(JSON.stringify(store.read())).toBe(before);
+  });
 });
