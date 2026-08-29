@@ -3,10 +3,10 @@
   "taskId": "c2c_cd94e6af",
   "transport": "github",
   "state": "EXECUTED",
-  "iteration": 2,
+  "iteration": 3,
   "goal": "Implement Browser Relay V0.3 according to the approved C2C_BROWSER_RELAY_ITERATION_PLAN.md, using the synchronized upstream baseline, with safe manual fallback, bounded recovery, session-store hardening, shared protocol import, and tests.",
   "createdAt": "2026-08-29T07:55:50.803Z",
-  "updatedAt": "2026-08-29T08:36:08.387Z",
+  "updatedAt": "2026-08-29T08:44:14.794Z",
   "repository": {
     "provider": "github",
     "owner": "huangzuomin",
@@ -16,30 +16,23 @@
   },
   "taskBaseCommit": "231c9ef52d12e9e3f04b68e28e2e79e09b4b7eda",
   "iterationBaseCommit": "231c9ef52d12e9e3f04b68e28e2e79e09b4b7eda",
-  "codeHeadCommit": "930a41f5e4c2f21a1ec036ff043a25efb8f0f06d",
+  "codeHeadCommit": "b6289aabce74f90aabb571366a35354516fb26ff",
   "declaredChangedFiles": [
-    "docs/protocol.md",
-    "skill/SKILL.md",
-    "src/cli/relay.ts",
     "src/relay/operation.ts",
-    "src/relay/policy.ts",
-    "src/relay/types.ts",
     "tests/relay-cli.test.ts",
-    "tests/relay-fallback-e2e.test.ts",
-    "tests/relay-operation.test.ts",
-    "tests/relay-protocol-integration.test.ts"
+    "tests/relay-fallback-e2e.test.ts"
   ],
   "tests": {
     "status": "passed",
-    "summary": "corepack pnpm typecheck: PASS; corepack pnpm test: 179 passed, 2 skipped; Manual Fallback E2E INIT-to-DONE: PASS; Browser Success E2E: unavailable in host",
+    "summary": "corepack pnpm typecheck: PASS; corepack pnpm test: 179 passed, 2 skipped; Manual Fallback E2E INIT-to-DONE with real node --check final validation: PASS; Browser Success E2E: unavailable in host",
     "command": "corepack pnpm typecheck && corepack pnpm test"
   },
-  "reviewFocus": "Review iteration 2 semantic repair classification, independent policy limits, authoritative session recovery, and complete Manual Fallback E2E against the approved plan. Browser Success E2E is unavailable in this host.",
+  "reviewFocus": "Review iteration 3 policy-source runtime enforcement, semantic fallback preservation, canonical capability flag, and complete Manual Fallback E2E evidence against the approved plan. Browser Success E2E remains unavailable in this host.",
   "lastImported": {
     "state": "PLAN",
-    "receivedAt": "2026-08-29T08:29:52.535Z"
+    "receivedAt": "2026-08-29T08:42:24.807Z"
   },
   "pendingDecision": null,
   "blockedFrom": null,
-  "publicationKey": "b2e0c3b6274f453efcf3b1acc4c11260d1ba93ea31167e41557f8331411f810d"
+  "publicationKey": "f3d5e48bef80b04c388d73e4502b65f2b1715ae4605affadd5835ad15cae198d"
 }
