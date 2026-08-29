@@ -11,7 +11,7 @@ const run = (args: string[], root: string) => spawnSync(process.execPath, ["--im
 describe("relay CLI", () => {
   it("reports safe manual fallback when browser capability is unavailable", () => {
     const root = makeTmpDir("relay-cli"); roots.push(root);
-    const result = run(["relay", "get", "--browser-capability", "unavailable"], root);
+    const result = run(["relay", "get", "--browser-relay-capability", "unavailable"], root);
     expect(result.status).toBe(0);
     expect(JSON.parse(result.stdout)).toMatchObject({ requestedMode: "auto", effectiveKind: "manual", fallbackRequired: false, limits: { browserRetries: 2, protocolRepairAttempts: 1, sessionRecoveryAttempts: 1 } });
   });

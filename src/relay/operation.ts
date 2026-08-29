@@ -12,11 +12,15 @@ const REPAIR = "[C2C] Return exactly one structured response with the requested 
 
 export async function runRelay(request: RelayRequest, host: RelayHost | null, conversationUrl?: string): Promise<RelayResult> {
   if (!host) return fallback("BROWSER_UNAVAILABLE", request.instruction);
-  let url: string;
+  let url = conversationUrl ?? "";
   try { url = await host.open(conversationUrl); } catch (error) {
     if (!isSessionMissing(error)) return fallback("NAVIGATION_FAILED", request.instruction);
-    if (!host.recoverSession || !request.bootPrompt || !request.handoff) return fallback("SESSION_NOT_FOUND", request.instruction);
-    try { url = await host.recoverSession({ bootPrompt: request.bootPrompt, handoff: request.handoff }); } catch { return fallback("SESSION_NOT_FOUND", request.instruction); }
+    if (!host.recoverSession || !request.bootPrompt || !request.handoff || RELAY_POLICY_LIMITS.sessionRecoveryAttempts < 1) return fallback("SESSION_NOT_FOUND", request.instruction);
+    let recovered = false;
+    for (let attempt = 0; attempt < RELAY_POLICY_LIMITS.sessionRecoveryAttempts; attempt++) {
+      try { url = await host.recoverSession({ bootPrompt: request.bootPrompt, handoff: request.handoff }); recovered = true; break; } catch { /* bounded recovery */ }
+    }
+    if (!recovered) return fallback("SESSION_NOT_FOUND", request.instruction);
   }
   let retries = 0;
   let text: string;
@@ -29,8 +33,12 @@ export async function runRelay(request: RelayRequest, host: RelayHost | null, co
   const classification = classify(text, request);
   if (classification === "valid") return { ok: true, kind: "browser", text, conversationUrl: url };
   if (classification === "semantic_error") return fallback("RESPONSE_MALFORMED", request.instruction);
-  try { text = await host.sendAndRead(REPAIR); } catch { return fallback("RESPONSE_MALFORMED", request.instruction); }
-  if (classify(text, request) === "valid") return { ok: true, kind: "browser", text, conversationUrl: url };
+  for (let attempt = 0; attempt < RELAY_POLICY_LIMITS.protocolRepairAttempts; attempt++) {
+    try { text = await host.sendAndRead(REPAIR); } catch { return fallback("RESPONSE_MALFORMED", request.instruction); }
+    const repaired = classify(text, request);
+    if (repaired === "valid") return { ok: true, kind: "browser", text, conversationUrl: url };
+    if (repaired === "semantic_error") break;
+  }
   return fallback("PROTOCOL_REPAIR_EXHAUSTED", request.instruction);
 }
 
