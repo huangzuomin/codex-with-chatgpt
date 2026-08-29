@@ -1,0 +1,31 @@
+{
+  "protocolVersion": 1,
+  "taskId": "c2c_d8ddaf52",
+  "transport": "github",
+  "state": "INIT",
+  "iteration": 0,
+  "goal": "Implement Browser Relay V0.3 according to the approved C2C_BROWSER_RELAY_ITERATION_PLAN.md, with safe manual fallback and tests.",
+  "createdAt": "2026-08-29T07:36:42.431Z",
+  "updatedAt": "2026-08-29T07:36:42.652Z",
+  "repository": {
+    "provider": "github",
+    "owner": "huangzuomin",
+    "name": "codex-with-chatgpt",
+    "remote": "origin",
+    "branch": "c2c/c2c-d8ddaf52-implement-browser-relay-v0-3-according-to-the-ap"
+  },
+  "taskBaseCommit": "64f2b6f30f06e0e1d1d7e0e226b164fb318fbdab",
+  "iterationBaseCommit": "64f2b6f30f06e0e1d1d7e0e226b164fb318fbdab",
+  "codeHeadCommit": "64f2b6f30f06e0e1d1d7e0e226b164fb318fbdab",
+  "declaredChangedFiles": [],
+  "tests": {
+    "status": "not_run",
+    "summary": null,
+    "command": null
+  },
+  "reviewFocus": "",
+  "lastImported": null,
+  "pendingDecision": null,
+  "blockedFrom": null,
+  "publicationKey": "9cf0b24b17bee9787c910b39636f0be4f1c6ddf8e67551c6fd55ec9295b44b31"
+}
