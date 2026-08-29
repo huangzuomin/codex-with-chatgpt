@@ -237,6 +237,14 @@ docs/         architecture / protocol / security / troubleshooting
 ## Status & disclaimer
 
 V0.2 supports the original MCP connector path and the ChatGPT Plus GitHub path.
+
+## Browser Relay V0.3 (pre-release)
+
+Browser Relay is an optional control-plane convenience layer. When the official
+browser capability is unavailable, `auto` falls back to the unchanged Manual
+Relay instruction; it never changes task state or transport. This release does
+not include a fake Browser adapter and does not use Playwright, Selenium,
+Puppeteer, DOM scraping, cookies, tokens, or private ChatGPT APIs.
 FilePack is future work for V0.3 and is not implemented or exposed as a command.
 
 **Unofficial community project. Not affiliated with or endorsed by OpenAI.**

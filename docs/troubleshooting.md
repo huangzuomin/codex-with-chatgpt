@@ -30,6 +30,15 @@ c2c task start "your goal" --transport github -w <workspace> --json
 Copy only the generated PLAN/REVIEW instruction and structured reply. Do not
 copy source files, diffs, cookies, or account tokens.
 
+### Browser Relay unavailable or failed
+
+Browser Relay is an optional convenience layer. `auto` safely falls back to
+Manual Relay when the host cannot control the official ChatGPT browser. The
+same original instruction remains valid; send it manually and import the
+structured reply. Browser failure does not change the task state or create a
+C2C BLOCKED result. The implementation does not use Playwright, Selenium,
+Puppeteer, DOM scraping, cookies, tokens, or private ChatGPT APIs.
+
 ## Common situations
 
 ### "Bridge 未运行"

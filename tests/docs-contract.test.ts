@@ -41,4 +41,12 @@ describe("V0.2 documentation contracts", () => {
     expect(VERSION).toBe("0.2.0");
     expect(pkg.version).toBe(VERSION);
   });
+
+  it("documents Browser Relay as optional and safely degradable", () => {
+    const combined = ["README.md", "README.zh-CN.md", "skill/SKILL.md", "docs/architecture.md", "docs/security.md", "docs/protocol.md", "docs/troubleshooting.md"].map(read).join("\n");
+    expect(combined).toContain("Manual Relay");
+    expect(combined).toContain("Browser Relay");
+    expect(combined).toMatch(/fallback|降级/i);
+    expect(combined).toMatch(/Playwright/);
+  });
 });

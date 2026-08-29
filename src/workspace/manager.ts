@@ -59,6 +59,7 @@ export interface ProjectConfig {
   name?: string;
   maxIterations?: number;
   transport?: "auto" | "mcp" | "github";
+  relay?: { mode?: "auto" | "manual" | "browser" };
   github?: {
     remote?: string;
     push?: boolean;

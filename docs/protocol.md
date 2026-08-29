@@ -3,6 +3,12 @@
 Control plane: Computer Use (tiny structured messages typed into the ChatGPT UI).
 Data plane: MCP (ChatGPT pulls files, diffs, search results itself).
 
+Browser Relay is an optional host-side control layer. It does not change the
+Protocol, Transport, TaskLifecycle, or TaskStore. Browser text is parsed and
+validated by the same import service as Manual Relay; one repair is allowed
+before returning the original instruction for manual fallback. Browser failure
+never becomes C2C BLOCKED.
+
 Never mix the two: control messages carry state, never content.
 
 ## Runtime contract in V0.2

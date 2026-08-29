@@ -28,6 +28,8 @@ import {
 } from "../config/endpoint.js";
 import { PRODUCT_NAME, VERSION } from "../version.js";
 import { registerTaskCommands } from "./task.js";
+import { registerRelayCommands } from "./relay.js";
+import { SessionStore } from "../session/store.js";
 
 const program = new Command();
 
@@ -108,6 +110,10 @@ program
   .configureHelp({ sortSubcommands: true });
 
 registerTaskCommands(program);
+registerRelayCommands(program, (data, json) => {
+  if (json) say(JSON.stringify({ ok: true, ...data }));
+  else say(JSON.stringify(data, null, 2));
+});
 
 // ---------------------------------------------------------------- serve (internal)
 
@@ -701,21 +707,6 @@ program
 
 // ---------------------------------------------------------------- session (ChatGPT conversation memory)
 
-interface SavedSession {
-  url: string;
-  title?: string;
-  taskId?: string;
-  iteration?: number;
-  lastState?: string;
-  savedAt: string;
-}
-
-function sessionFile(workspaceId: string): string {
-  const dir = path.join(getStateDir(), "sessions");
-  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-  return path.join(dir, `${workspaceId}.json`);
-}
-
 const session = program
   .command("session")
   .description("Remember and reuse the ChatGPT conversation for this workspace");
@@ -724,17 +715,17 @@ session
   .command("get", { isDefault: true })
   .description("Show the saved ChatGPT conversation for this workspace")
   .option("-w, --workspace <path>")
-  .option("--json", "machine-readable output", false)
-  .action((opts: { workspace?: string; json: boolean }) => {
-    const workspace = new Workspace(resolveWorkspace(opts.workspace));
-    const file = sessionFile(workspace.id);
-    const saved = fs.existsSync(file) ? (JSON.parse(fs.readFileSync(file, "utf8")) as SavedSession) : null;
-    if (opts.json) say(JSON.stringify({ ok: true, session: saved }));
+    .option("--json", "machine-readable output", false)
+    .action((opts: { workspace?: string; json: boolean }) => {
+      const workspace = new Workspace(resolveWorkspace(opts.workspace));
+    const saved = new SessionStore(workspace.id, getStateDir()).read();
+    const legacy = saved ? { ...saved, url: saved.conversationUrl, taskId: saved.lastTaskId, iteration: saved.lastIteration } : null;
+    if (opts.json) say(JSON.stringify({ ok: true, session: legacy }));
     else if (!saved) say("尚未记录 ChatGPT 会话。");
     else {
       say(`会话：${saved.title ?? "(untitled)"}`);
-      say(`地址：${saved.url}`);
-      if (saved.taskId) say(`任务：${saved.taskId}（第 ${saved.iteration ?? 0} 轮，${saved.lastState ?? "?"}）`);
+      say(`地址：${saved.conversationUrl}`);
+      if (saved.lastTaskId) say(`任务：${saved.lastTaskId}（第 ${saved.lastIteration ?? 0} 轮，${saved.lastState ?? "?"}）`);
     }
   });
 
@@ -746,30 +737,27 @@ session
   .option("--title <title>")
   .option("--task <id>")
   .option("--iteration <n>")
-  .option("--state <state>", "last protocol state, e.g. EXECUTED")
-  .action((opts: { workspace?: string; url: string; title?: string; task?: string; iteration?: string; state?: string }) => {
-    const workspace = new Workspace(resolveWorkspace(opts.workspace));
-    const file = sessionFile(workspace.id);
-    const previous = fs.existsSync(file) ? (JSON.parse(fs.readFileSync(file, "utf8")) as SavedSession) : null;
-    const saved: SavedSession = {
-      url: opts.url,
+    .option("--state <state>", "last protocol state, e.g. EXECUTED")
+    .action((opts: { workspace?: string; url: string; title?: string; task?: string; iteration?: string; state?: string }) => {
+      const workspace = new Workspace(resolveWorkspace(opts.workspace));
+    const previous = new SessionStore(workspace.id, getStateDir()).read();
+    new SessionStore(workspace.id, getStateDir()).save({
+      conversationUrl: opts.url,
       title: opts.title ?? previous?.title,
-      taskId: opts.task ?? previous?.taskId,
-      iteration: opts.iteration ? parseInt(opts.iteration, 10) : previous?.iteration,
-      lastState: opts.state ?? previous?.lastState,
-      savedAt: new Date().toISOString(),
-    };
-    fs.writeFileSync(file, JSON.stringify(saved, null, 2), { mode: 0o600 });
+      lastTaskId: opts.task ?? previous?.lastTaskId,
+      lastIteration: opts.iteration ? parseInt(opts.iteration, 10) : previous?.lastIteration,
+      lastState: opts.state ? (opts.state as "INIT" | "PLAN" | "EXECUTING" | "EXECUTED" | "DONE" | "BLOCKED") : previous?.lastState,
+    });
     check("已记录 ChatGPT 会话，后续任务将复用");
   });
 
 session
   .command("clear")
   .description("Forget the saved conversation (a new chat will be created next time)")
-  .option("-w, --workspace <path>")
-  .action((opts: { workspace?: string }) => {
-    const workspace = new Workspace(resolveWorkspace(opts.workspace));
-    fs.rmSync(sessionFile(workspace.id), { force: true });
+    .option("-w, --workspace <path>")
+    .action((opts: { workspace?: string }) => {
+      const workspace = new Workspace(resolveWorkspace(opts.workspace));
+    new SessionStore(workspace.id, getStateDir()).clear();
     check("已清除会话记录，下次任务将新建 ChatGPT 会话");
   });
 

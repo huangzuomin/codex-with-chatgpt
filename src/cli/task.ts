@@ -3,11 +3,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { parseGitHubRemote } from "../github/repository.js";
 import { buildPlanInstruction } from "../protocol/instructions.js";
-import { parseC2CMessage } from "../protocol/parser.js";
 import type { TaskSnapshot } from "../protocol/types.js";
-import { validateImportedMessage } from "../protocol/validator.js";
 import { TaskLifecycle, TaskLifecycleError } from "../task/lifecycle.js";
 import { TaskStore, TaskStoreError } from "../task/store.js";
+import { importTaskMessage } from "../task/import.js";
 import { generateTaskId, GitHubTransport } from "../transport/github.js";
 import { McpTransport } from "../transport/mcp.js";
 import { selectTransport, TransportSelectionError, type TransportPreference } from "../transport/select.js";
@@ -132,29 +131,13 @@ export function registerTaskCommands(program: Command): void {
       try {
         const root = resolveWorkspace(opts.workspace);
         const text = opts.file ? fs.readFileSync(path.resolve(opts.file), "utf8") : fs.readFileSync(0, "utf8");
-        const parsed = parseC2CMessage(text);
-        if (!parsed.ok) {
-          const diagnostic = parsed.diagnostics.find((item) => item.severity === "error") ?? parsed.diagnostics[0];
-          return emitFailure(diagnostic?.code ?? "PROTOCOL_PARSE_FAILED", diagnostic?.message ?? "Invalid C2C message.", opts.json);
-        }
         const store = new TaskStore(root);
-        const current = store.read();
-        if (!current) return emitFailure("TASK_NOT_FOUND", "No active C2C task exists.", opts.json);
-        const validation = validateImportedMessage(parsed.message, {
-          taskId: current.taskId,
-          currentState: current.state,
-          currentIteration: current.iteration,
-        });
-        if (!validation.ok) {
-          return emitFailure(validation.code, validation.message, opts.json, validation.expectedTemplate);
-        }
-        const imported = new TaskLifecycle(store).importMessage(parsed.message);
+        const imported = importTaskMessage(store, text);
+        if (!imported.ok) return emitFailure(imported.code, imported.message, opts.json, imported.expectedTemplate);
         emitSuccess(
           {
-            state: imported.snapshot.state,
-            iteration: imported.snapshot.iteration,
-            acceptedDecision: imported.validation.acceptedDecision,
-            requiresFinalValidation: imported.validation.requiresFinalValidation,
+            state: imported.snapshot.state, iteration: imported.snapshot.iteration,
+            acceptedDecision: imported.validation.acceptedDecision, requiresFinalValidation: imported.validation.requiresFinalValidation,
             snapshot: imported.snapshot,
           },
           opts.json

@@ -50,6 +50,16 @@ replaceable data channel. Codex Execution edits files and runs tests.
   `.c2c/tasks/<taskId>.json` are deterministic, repairable projections.
 - FilePack is future V0.3 work. V0.2 has no FilePack subsystem or command.
 
+## Browser Relay V0.3 boundary
+
+Browser Relay is an optional control-plane UX layer between an instruction and
+the existing protocol import service. `src/relay` owns mode selection, bounded
+retry/repair/recovery policy, and fallback results; it never owns transport,
+task state, Git, or source content. The official host may bind a browser
+capability later. Until then `auto` safely resolves to Manual Relay, preserving
+the exact instruction for the user. No Browser adapter is shipped in this
+release.
+
 ## Components (src/)
 
 | Module | Responsibility |

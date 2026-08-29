@@ -54,6 +54,16 @@ Write files, delete files, run shell commands, commit, install packages —
 these tools do not exist on the server, so no prompt injection, scope bug, or
 UI confusion can enable them.
 
+## Browser Relay boundary
+
+Browser Relay receives only workspace identity, task identity, an instruction,
+expected protocol states, and bounded operation policy. It reads visible C2C
+text only. It never handles cookies, tokens, page HTML, DOM selectors,
+localStorage/sessionStorage, private ChatGPT APIs, or third-party browser
+automation. If the official browser capability is unavailable or fails, the
+original instruction is returned unchanged for Manual Relay and task state is
+not imported.
+
 ## GitHub transport boundary (V0.2)
 
 GitHub mode stages only explicit declared paths. It refuses main/master,

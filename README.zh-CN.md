@@ -184,6 +184,10 @@ docs/         架构 / 协议 / 安全 / 故障排查
 ## 状态与声明
 
 V0.2 同时支持原有 MCP 连接器路径和 ChatGPT Plus GitHub 路径。
+Browser Relay V0.3 仍为预发布能力：它只是可选的控制层；官方浏览器能力不可用时，
+`auto` 会安全降级为原样 Manual Relay，不改变任务状态或数据通道。本版本不包含假的
+Browser adapter，也不使用 Playwright、Selenium、Puppeteer、DOM 抓取、Cookie、Token
+或 ChatGPT 私有 API。
 FilePack 留待 V0.3，当前没有实现，也没有对应命令。
 
 **非官方社区项目，与 OpenAI 无关联，未获其背书。**

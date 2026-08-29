@@ -269,6 +269,23 @@ Please independently inspect the workspace and current git diff through MCP.
 10. On BLOCKED: read ChatGPT's reason, fix what you can, or surface the single
     decision the user must make.
 
+## Workflow: Browser Relay（V0.3 pre-release）
+
+Browser Relay is an optional control-plane convenience layer. Before any
+browser action, report the host's instantaneous capability:
+`c2c relay get -w <workspace> --browser-capability <available|unavailable> --json`.
+Use the returned `effectiveKind` and policy limits; do not duplicate selection
+or retry rules in the Skill. `auto` safely selects Manual Relay when the
+official browser capability is unavailable. Preserve the complete original
+instruction byte-for-byte and show it once for manual sending. Browser failure
+does not import a message, change task state, or become C2C BLOCKED.
+
+Only an official host capability may perform open/send/wait/read in the built-in
+browser. This release has no Node Browser adapter. Never use Playwright,
+Selenium, Puppeteer, DOM scraping, page HTML, cookies, tokens, or private
+ChatGPT APIs. If a visible login, CAPTCHA, 2FA, or consent screen appears,
+request exactly one user action and then continue.
+
 ## Workflow: disconnect（"断开 ChatGPT"）
 
 1. `c2c unpair -w <workspace>` (revokes all tokens immediately).
