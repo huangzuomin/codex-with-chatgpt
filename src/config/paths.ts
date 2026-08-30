@@ -31,6 +31,11 @@ export function stateSubdir(name: string): string {
   return ensureDir(path.join(getStateDir(), name));
 }
 
+/** Persistent multi-project registry; project data remains in each project root. */
+export function projectsFile(): string {
+  return path.join(ensureDir(getStateDir()), "projects.json");
+}
+
 /** Write a JSON file with owner-only permissions. */
 export function writeSecureJson(file: string, data: unknown): void {
   ensureDir(path.dirname(file));

@@ -27,6 +27,7 @@ import {
 } from "../tunnel/state.js";
 import { Logger } from "../logger/index.js";
 import { getStateDir } from "../config/paths.js";
+import { addProject, listProjects, removeProject, setActiveProject } from "../projects/registry.js";
 import { ensureSandboxAllowlist, getCodexConfigPath, isStateDirAllowlisted } from "../config/sandbox-allow.js";
 import {
   CHATGPT_CREATE_CONNECTOR_URL,
@@ -706,6 +707,69 @@ program
       say(`Workspace：${data.name}（${data.workspaceId}）`);
       say(`类型：${data.projectType}  语言：${data.languages.join(", ") || "-"}`);
       say(`路径：${data.root}`);
+    }
+  });
+
+// ---------------------------------------------------------------- projects
+
+const projects = program.command("projects").alias("project").description("Manage registered workspaces");
+
+projects
+  .command("list", { isDefault: true })
+  .description("List registered workspaces")
+  .option("--json", "machine-readable output", false)
+  .action((opts: { json: boolean }) => {
+    const data = listProjects();
+    if (opts.json) {
+      say(JSON.stringify({ ok: true, projects: data }));
+      return;
+    }
+    if (data.length === 0) say("暂无已注册项目。");
+    for (const project of data) say(`${project.id}  ${project.name}  ${project.root}`);
+  });
+
+projects
+  .command("add <path>")
+  .description("Register a workspace directory")
+  .option("--name <name>", "display name")
+  .option("--use", "make this project active", false)
+  .option("--json", "machine-readable output", false)
+  .action((root: string, opts: { name?: string; use: boolean; json: boolean }) => {
+    try {
+      const project = addProject(root, opts.name);
+      if (opts.use) setActiveProject(project.id);
+      if (opts.json) say(JSON.stringify({ ok: true, project, active: opts.use }));
+      else check(`已注册项目：${project.name}（${project.id}）`);
+    } catch (error) {
+      handleCliError(error, opts.json);
+    }
+  });
+
+projects
+  .command("use <id>")
+  .description("Select the active workspace")
+  .option("--json", "machine-readable output", false)
+  .action((id: string, opts: { json: boolean }) => {
+    try {
+      const project = setActiveProject(id);
+      if (opts.json) say(JSON.stringify({ ok: true, project }));
+      else check(`当前项目：${project.name}`);
+    } catch (error) {
+      handleCliError(error, opts.json);
+    }
+  });
+
+projects
+  .command("remove <id>")
+  .description("Unregister a workspace without deleting it")
+  .option("--json", "machine-readable output", false)
+  .action((id: string, opts: { json: boolean }) => {
+    try {
+      removeProject(id);
+      if (opts.json) say(JSON.stringify({ ok: true, removed: id }));
+      else check(`已取消注册项目：${id}`);
+    } catch (error) {
+      handleCliError(error, opts.json);
     }
   });
 
