@@ -109,6 +109,7 @@ describe("discovery metadata", () => {
   it("serves authorization server metadata with PKCE S256", async () => {
     const response = await fetch(`${base}/.well-known/oauth-authorization-server`);
     const body = (await response.json()) as Record<string, unknown>;
+    expect(body.authorization_response_iss_parameter_supported).toBe(true);
     expect(body.code_challenge_methods_supported).toEqual(["S256"]);
     expect(body.grant_types_supported).toEqual(["authorization_code", "refresh_token"]);
     expect(body.registration_endpoint).toContain("/oauth/register");
@@ -117,6 +118,58 @@ describe("discovery metadata", () => {
 });
 
 describe("authorization + token flow", () => {
+  it("includes iss in supported authorization error redirects", async () => {
+    const clientId = await registerClient();
+    const authorizeUrl = new URL(`${base}/oauth/authorize`);
+    authorizeUrl.searchParams.set("client_id", clientId);
+    authorizeUrl.searchParams.set("redirect_uri", REDIRECT_URI);
+    authorizeUrl.searchParams.set("response_type", "token");
+    authorizeUrl.searchParams.set("state", "error-state");
+    authorizeUrl.searchParams.set("resource", canonicalResource());
+    const response = await fetch(authorizeUrl, { redirect: "manual" });
+    const location = new URL(response.headers.get("location")!);
+    const metadataResponse = await fetch(`${base}/.well-known/oauth-authorization-server`);
+    const metadata = (await metadataResponse.json()) as { issuer: string };
+
+    expect(location.searchParams.get("error")).toBe("unsupported_response_type");
+    expect(location.searchParams.get("state")).toBe("error-state");
+    expect(location.searchParams.get("iss")).toBe(metadata.issuer);
+  });
+
+  it("includes iss in PKCE invalid_request redirects", async () => {
+    const clientId = await registerClient();
+    const authorizeUrl = new URL(`${base}/oauth/authorize`);
+    authorizeUrl.searchParams.set("client_id", clientId);
+    authorizeUrl.searchParams.set("redirect_uri", REDIRECT_URI);
+    authorizeUrl.searchParams.set("response_type", "code");
+    authorizeUrl.searchParams.set("state", "pkce-state");
+    authorizeUrl.searchParams.set("resource", canonicalResource());
+    const response = await fetch(authorizeUrl, { redirect: "manual" });
+    const location = new URL(response.headers.get("location")!);
+
+    expect(location.searchParams.get("error")).toBe("invalid_request");
+    expect(location.searchParams.get("state")).toBe("pkce-state");
+    expect(location.searchParams.get("iss")).toBe(base);
+  });
+
+  it("includes iss in invalid_target redirects", async () => {
+    const clientId = await registerClient();
+    const authorizeUrl = new URL(`${base}/oauth/authorize`);
+    authorizeUrl.searchParams.set("client_id", clientId);
+    authorizeUrl.searchParams.set("redirect_uri", REDIRECT_URI);
+    authorizeUrl.searchParams.set("response_type", "code");
+    authorizeUrl.searchParams.set("state", "resource-state");
+    authorizeUrl.searchParams.set("code_challenge", "challenge");
+    authorizeUrl.searchParams.set("code_challenge_method", "S256");
+    authorizeUrl.searchParams.set("resource", `${base}/wrong-mcp`);
+    const response = await fetch(authorizeUrl, { redirect: "manual" });
+    const location = new URL(response.headers.get("location")!);
+
+    expect(location.searchParams.get("error")).toBe("invalid_target");
+    expect(location.searchParams.get("state")).toBe("resource-state");
+    expect(location.searchParams.get("iss")).toBe(base);
+  });
+
   it("completes the full pairing + PKCE flow and calls MCP", async () => {
     const clientId = await registerClient();
     const { verifier, challenge } = pkceVerifierAndChallenge();
@@ -124,6 +177,9 @@ describe("authorization + token flow", () => {
     const { code, location } = await authorizeWithPairing(clientId, challenge, pairing.code);
     expect(code).toBeTruthy();
     expect(location).toContain("state=st-123");
+    const metadataResponse = await fetch(`${base}/.well-known/oauth-authorization-server`);
+    const metadata = (await metadataResponse.json()) as { issuer: string };
+    expect(new URL(location!).searchParams.get("iss")).toBe(metadata.issuer);
 
     const token = await exchangeToken(clientId, code!, verifier);
     expect(token.status).toBe(200);

@@ -42,6 +42,7 @@ function isAllowedRedirectUri(uri: string): boolean {
 function authorizationServerMetadata(base: string): Record<string, unknown> {
   return {
     issuer: base,
+    authorization_response_iss_parameter_supported: true,
     authorization_endpoint: `${base}/oauth/authorize`,
     token_endpoint: `${base}/oauth/token`,
     registration_endpoint: `${base}/oauth/register`,
@@ -206,11 +207,13 @@ export function createOAuthRouter(deps: OAuthDeps): Router {
       res.status(400).send("Invalid redirect_uri.");
       return;
     }
+    const issuer = authorizationServerMetadata(deps.getBaseUrl(req)).issuer as string;
     const fail = (error: string, description: string): void => {
       const url = new URL(redirectUri);
       url.searchParams.set("error", error);
       url.searchParams.set("error_description", description);
       if (query.state) url.searchParams.set("state", query.state);
+      url.searchParams.set("iss", issuer);
       res.redirect(url.toString());
     };
     if (query.response_type !== "code") {
@@ -291,6 +294,7 @@ export function createOAuthRouter(deps: OAuthDeps): Router {
     const url = new URL(request.redirectUri);
     url.searchParams.set("code", code);
     if (request.state) url.searchParams.set("state", request.state);
+    url.searchParams.set("iss", authorizationServerMetadata(deps.getBaseUrl(req)).issuer as string);
     res.redirect(url.toString());
   });
 
