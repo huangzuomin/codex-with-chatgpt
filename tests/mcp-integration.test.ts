@@ -1,15 +1,20 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import fs from "node:fs";
 import path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { startBridge, type Bridge } from "../src/bridge/server.js";
 import { appendExecutionRecord } from "../src/execution/records.js";
+import { addProject, removeProject } from "../src/projects/registry.js";
+import { projectsFile } from "../src/config/paths.js";
 import { makeTmpDir, cleanup, write, makeGitRepo, git, isolateStateDir } from "./helpers.js";
 
 let root: string;
 let bridge: Bridge;
 let client: Client;
 let accessToken: string;
+let stateDir: string;
+const projectRoots: Record<string, string> = {};
 
 function textOf(result: { content?: unknown }): string {
   const content = result.content as { type: string; text: string }[];
@@ -21,13 +26,27 @@ function jsonOf<T = Record<string, unknown>>(result: { content?: unknown }): T {
 }
 
 beforeAll(async () => {
-  isolateStateDir();
+  stateDir = isolateStateDir();
   root = makeTmpDir("mcp-ws");
   makeGitRepo(root);
   write(root, "package.json", JSON.stringify({ name: "demo", scripts: { test: "vitest run" }, dependencies: { react: "^19.0.0" } }));
   write(root, ".env", "API_KEY=supersecret\n");
   // an uncommitted change so git_diff has content
   write(root, "src/index.ts", "export const answer = 43; // changed\n");
+
+  for (const id of ["alpha", "beta", "gamma"]) {
+    const projectRoot = makeTmpDir(`mcp-${id}`);
+    projectRoots[id] = projectRoot;
+    makeGitRepo(projectRoot);
+    write(projectRoot, "shared.txt", `${id} content\n`);
+    write(projectRoot, `${id}-only.txt`, `needle-${id}\n`);
+    write(projectRoot, "scoped.txt", `${id}-base\n`);
+    git(projectRoot, "add", "shared.txt", `${id}-only.txt`, "scoped.txt");
+    git(projectRoot, "commit", "-m", `add ${id} fixtures`);
+    write(projectRoot, "scoped.txt", `${id}-dirty\n`);
+    addProject({ id, displayName: id.toUpperCase(), workspaceRoot: projectRoot, repo: `local/${id}` });
+  }
+  write(projectRoots.beta, "beta-untracked.txt", "beta status marker\n");
 
   bridge = await startBridge({
     workspaceRoot: root,
@@ -52,10 +71,13 @@ afterAll(async () => {
   await client.close();
   await bridge.close();
   cleanup(root);
+  for (const projectRoot of Object.values(projectRoots)) cleanup(projectRoot);
+  cleanup(stateDir);
+  delete process.env.C2C_STATE_DIR;
 });
 
 describe("MCP tools over Streamable HTTP", () => {
-  it("lists all eight read-only tools", async () => {
+  it("lists projects_list and all eight project-aware read-only tools", async () => {
     const { tools } = await client.listTools();
     const names = tools.map((tool) => tool.name).sort();
     expect(names).toEqual([
@@ -63,11 +85,16 @@ describe("MCP tools over Streamable HTTP", () => {
       "git_diff",
       "git_status",
       "list_directory",
+      "projects_list",
       "read_file",
       "search_workspace",
       "test_status",
       "workspace_info",
     ]);
+    for (const tool of tools.filter((item) => item.name !== "projects_list")) {
+      const properties = (tool.inputSchema as { properties?: Record<string, unknown> }).properties ?? {};
+      expect(properties).toHaveProperty("project_id");
+    }
     // no write tools in V1
     for (const forbidden of ["write_file", "delete_file", "execute_shell", "git_commit", "install_package"]) {
       expect(names).not.toContain(forbidden);
@@ -82,6 +109,140 @@ describe("MCP tools over Streamable HTTP", () => {
     expect(info.frameworks).toContain("React");
     expect(info.git.isRepo).toBe(true);
     expect(info.git.branch).toBe("main");
+  });
+
+  it("projects_list returns deterministic safe metadata without local paths", async () => {
+    const result = await client.callTool({ name: "projects_list", arguments: {} });
+    const data = jsonOf<{ projects: { id: string; displayName: string; repo?: string; enabled: boolean }[] }>(result);
+    expect(data.projects.map((project) => project.id)).toEqual(["alpha", "beta", "gamma"]);
+    expect(data.projects[0]).toEqual({ id: "alpha", displayName: "ALPHA", repo: "local/alpha", enabled: true });
+    expect(textOf(result)).not.toContain(projectRoots.alpha);
+    expect(textOf(result)).not.toContain("workspaceRoot");
+  });
+
+  it("routes workspace_info, read_file, list_directory, and search_workspace by project_id", async () => {
+    const info = jsonOf<{ workspaceId: string; workspaceName: string }>(
+      await client.callTool({ name: "workspace_info", arguments: { project_id: "alpha" } })
+    );
+    expect(info.workspaceId).not.toBe(bridge.workspace.id);
+
+    const alpha = jsonOf<{ content: string }>(
+      await client.callTool({ name: "read_file", arguments: { project_id: "alpha", path: "shared.txt" } })
+    );
+    const beta = jsonOf<{ content: string }>(
+      await client.callTool({ name: "read_file", arguments: { project_id: "beta", path: "shared.txt" } })
+    );
+    expect(alpha.content).toBe("alpha content");
+    expect(beta.content).toBe("beta content");
+
+    const listing = jsonOf<{ entries: { path: string }[] }>(
+      await client.callTool({ name: "list_directory", arguments: { project_id: "alpha", path: "." } })
+    );
+    expect(listing.entries.some((entry) => entry.path === "alpha-only.txt")).toBe(true);
+    expect(listing.entries.some((entry) => entry.path === "beta-only.txt")).toBe(false);
+
+    const search = jsonOf<{ matches: { path: string; text: string }[] }>(
+      await client.callTool({ name: "search_workspace", arguments: { project_id: "beta", query: "needle-beta" } })
+    );
+    expect(search.matches).toEqual([expect.objectContaining({ path: "beta-only.txt", text: "needle-beta" })]);
+  });
+
+  it("routes git_status and git_diff, including path resolution, by project_id", async () => {
+    const status = jsonOf<{ untracked: string[] }>(
+      await client.callTool({ name: "git_status", arguments: { project_id: "beta" } })
+    );
+    expect(status.untracked).toContain("beta-untracked.txt");
+
+    const betaDiff = jsonOf<{ diff: string }>(
+      await client.callTool({ name: "git_diff", arguments: { project_id: "beta", mode: "unstaged" } })
+    );
+    expect(betaDiff.diff).toContain("beta-dirty");
+    expect(betaDiff.diff).not.toContain("alpha-dirty");
+
+    const gammaPathDiff = jsonOf<{ diff: string }>(
+      await client.callTool({
+        name: "git_diff",
+        arguments: { project_id: "gamma", mode: "unstaged", path: "scoped.txt" },
+      })
+    );
+    expect(gammaPathDiff.diff).toContain("gamma-dirty");
+    expect(gammaPathDiff.diff).not.toContain("beta-dirty");
+  });
+
+  it("uses the selected workspace id for test_status and execution_summary", async () => {
+    const alphaWorkspaceId = jsonOf<{ workspaceId: string }>(
+      await client.callTool({ name: "workspace_info", arguments: { project_id: "alpha" } })
+    ).workspaceId;
+    const gammaWorkspaceId = jsonOf<{ workspaceId: string }>(
+      await client.callTool({ name: "workspace_info", arguments: { project_id: "gamma" } })
+    ).workspaceId;
+    appendExecutionRecord(alphaWorkspaceId, {
+      taskId: "alpha_task",
+      iteration: 1,
+      changedFiles: [],
+      tests: "alpha passed",
+      exitStatus: "ok",
+      timestamp: new Date().toISOString(),
+    });
+    appendExecutionRecord(gammaWorkspaceId, {
+      taskId: "gamma_task",
+      iteration: 1,
+      changedFiles: [],
+      tests: "gamma passed",
+      exitStatus: "ok",
+      timestamp: new Date().toISOString(),
+    });
+
+    const status = jsonOf<{ tests: string }>(
+      await client.callTool({ name: "test_status", arguments: { project_id: "alpha" } })
+    );
+    const summary = jsonOf<{ records: { taskId: string }[] }>(
+      await client.callTool({ name: "execution_summary", arguments: { project_id: "gamma", limit: 5 } })
+    );
+    expect(status.tests).toBe("alpha passed");
+    expect(summary.records[0].taskId).toBe("gamma_task");
+  });
+
+  it("rejects unknown projects and cross-project traversal", async () => {
+    const unknown = await client.callTool({ name: "read_file", arguments: { project_id: "missing", path: "shared.txt" } });
+    expect(unknown.isError).toBe(true);
+    expect(textOf(unknown)).toContain("PROJECT_NOT_FOUND");
+
+    const escapePath = path.join(path.relative(projectRoots.alpha, projectRoots.beta), "shared.txt");
+    const traversal = await client.callTool({
+      name: "read_file",
+      arguments: { project_id: "alpha", path: escapePath },
+    });
+    expect(traversal.isError).toBe(true);
+    expect(textOf(traversal)).toContain("PATH_OUTSIDE_WORKSPACE");
+    expect(textOf(traversal)).not.toContain("beta content");
+  });
+
+  it("rejects a disabled registered project through MCP", async () => {
+    const disabledRoot = makeTmpDir("mcp-disabled");
+    projectRoots.disabled = disabledRoot;
+    write(disabledRoot, "shared.txt", "disabled content\n");
+    const registry = JSON.parse(fs.readFileSync(projectsFile(), "utf8")) as {
+      version: 1;
+      projects: Record<string, unknown>;
+    };
+    registry.projects.disabled = {
+      id: "disabled",
+      displayName: "DISABLED",
+      workspaceRoot: disabledRoot,
+      enabled: false,
+    };
+    fs.writeFileSync(projectsFile(), JSON.stringify(registry));
+
+    const result = await client.callTool({
+      name: "read_file",
+      arguments: { project_id: "disabled", path: "shared.txt" },
+    });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain("PROJECT_DISABLED");
+
+    delete registry.projects.disabled;
+    fs.writeFileSync(projectsFile(), JSON.stringify(registry));
   });
 
   it("read_file returns hello.txt", async () => {
@@ -185,7 +346,20 @@ describe("MCP tools over Streamable HTTP", () => {
     expect(textOf(denied)).toContain("INSUFFICIENT_SCOPE");
     const allowed = await limitedClient.callTool({ name: "read_file", arguments: { path: "hello.txt" } });
     expect(allowed.isError ?? false).toBe(false);
+    const projectsAllowed = await limitedClient.callTool({ name: "projects_list", arguments: {} });
+    expect(projectsAllowed.isError ?? false).toBe(false);
     await limitedClient.close();
+
+    const executionOnly = bridge.authStore.issueTokens({ clientId: "execution-only", scopes: ["execution.read"] });
+    const executionClient = new Client({ name: "execution-only", version: "1.0.0" });
+    const executionTransport = new StreamableHTTPClientTransport(new URL(`${bridge.localBaseUrl()}/mcp`), {
+      requestInit: { headers: { authorization: `Bearer ${executionOnly.accessToken}` } },
+    });
+    await executionClient.connect(executionTransport);
+    const projectsDenied = await executionClient.callTool({ name: "projects_list", arguments: {} });
+    expect(projectsDenied.isError).toBe(true);
+    expect(textOf(projectsDenied)).toContain("INSUFFICIENT_SCOPE");
+    await executionClient.close();
   });
 
   it("git_diff over MCP excludes sensitive files like .npmrc and service-account*.json", async () => {
@@ -245,5 +419,39 @@ describe("MCP tools over Streamable HTTP", () => {
     expect(result.diff).not.toContain("src/public.txt");
 
     git(root, "reset", "--hard", "HEAD");
+  });
+
+  it("supports alpha, beta, gamma and dynamic delta add/beta removal through one MCP server", async () => {
+    for (const id of ["alpha", "beta", "gamma"]) {
+      const file = jsonOf<{ content: string }>(
+        await client.callTool({ name: "read_file", arguments: { project_id: id, path: "shared.txt" } })
+      );
+      expect(file.content).toBe(`${id} content`);
+    }
+
+    const deltaRoot = makeTmpDir("mcp-delta");
+    projectRoots.delta = deltaRoot;
+    write(deltaRoot, "shared.txt", "delta content\n");
+    addProject({ id: "delta", displayName: "DELTA", workspaceRoot: deltaRoot });
+    const delta = jsonOf<{ content: string }>(
+      await client.callTool({ name: "read_file", arguments: { project_id: "delta", path: "shared.txt" } })
+    );
+    expect(delta.content).toBe("delta content");
+
+    removeProject("beta");
+    const removed = await client.callTool({ name: "read_file", arguments: { project_id: "beta", path: "shared.txt" } });
+    expect(removed.isError).toBe(true);
+    expect(textOf(removed)).toContain("PROJECT_NOT_FOUND");
+
+    const available = jsonOf<{ projects: { id: string }[] }>(
+      await client.callTool({ name: "projects_list", arguments: {} })
+    );
+    expect(available.projects.map((project) => project.id)).toEqual(["alpha", "delta", "gamma"]);
+    for (const id of ["alpha", "gamma", "delta"]) {
+      const file = jsonOf<{ content: string }>(
+        await client.callTool({ name: "read_file", arguments: { project_id: id, path: "shared.txt" } })
+      );
+      expect(file.content).toBe(`${id} content`);
+    }
   });
 });
