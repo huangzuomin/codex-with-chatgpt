@@ -309,7 +309,16 @@ program
     await stopBridge(root);
     await new Promise((resolve) => setTimeout(resolve, 500));
     try {
-      const { info, mcpUrl } = await ensureBridgeAndTunnel(root, { tunnel: opts.tunnel });
+      const { runtime, info, mcpUrl } = await ensureBridgeAndTunnel(root, { tunnel: opts.tunnel });
+      if (mcpUrl) {
+        persistWorkspaceEndpoint({
+          workspaceId: info.workspaceId,
+          workspaceName: info.workspaceName,
+          port: runtime.port,
+          publicUrl: info.publicUrl,
+          mcpUrl,
+        });
+      }
       check(`Bridge 已重启（${info.workspaceName}）`);
       if (mcpUrl) check(`安全连接已建立`);
     } catch (error) {

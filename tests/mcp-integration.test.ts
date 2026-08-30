@@ -57,6 +57,7 @@ beforeAll(async () => {
   const tokens = bridge.authStore.issueTokens({
     clientId: "it-client",
     scopes: ["workspace.read", "workspace.search", "git.read", "execution.read"],
+    resource: `${bridge.localBaseUrl()}/mcp`,
   });
   accessToken = tokens.accessToken;
 
@@ -335,7 +336,11 @@ describe("MCP tools over Streamable HTTP", () => {
   });
 
   it("enforces scopes per tool", async () => {
-    const limited = bridge.authStore.issueTokens({ clientId: "limited", scopes: ["workspace.read"] });
+    const limited = bridge.authStore.issueTokens({
+      clientId: "limited",
+      scopes: ["workspace.read"],
+      resource: `${bridge.localBaseUrl()}/mcp`,
+    });
     const limitedClient = new Client({ name: "limited", version: "1.0.0" });
     const transport = new StreamableHTTPClientTransport(new URL(`${bridge.localBaseUrl()}/mcp`), {
       requestInit: { headers: { authorization: `Bearer ${limited.accessToken}` } },
@@ -350,7 +355,11 @@ describe("MCP tools over Streamable HTTP", () => {
     expect(projectsAllowed.isError ?? false).toBe(false);
     await limitedClient.close();
 
-    const executionOnly = bridge.authStore.issueTokens({ clientId: "execution-only", scopes: ["execution.read"] });
+    const executionOnly = bridge.authStore.issueTokens({
+      clientId: "execution-only",
+      scopes: ["execution.read"],
+      resource: `${bridge.localBaseUrl()}/mcp`,
+    });
     const executionClient = new Client({ name: "execution-only", version: "1.0.0" });
     const executionTransport = new StreamableHTTPClientTransport(new URL(`${bridge.localBaseUrl()}/mcp`), {
       requestInit: { headers: { authorization: `Bearer ${executionOnly.accessToken}` } },

@@ -47,6 +47,15 @@ export function bearerAuth(deps: BearerAuthDeps) {
       });
       return;
     }
+    const canonicalResource = `${deps.getBaseUrl(req)}/mcp`;
+    if (verdict.record.resource !== canonicalResource) {
+      deps.logger.warn("Rejected MCP request: token bound to a different resource");
+      res.status(403).json({
+        error: "forbidden",
+        error_description: "This token is not valid for the requested MCP resource",
+      });
+      return;
+    }
     const authInfo: AuthInfo = {
       token,
       clientId: verdict.record.clientId,

@@ -8,6 +8,7 @@ let bridge: Bridge;
 let base: string;
 
 const REDIRECT_URI = "http://127.0.0.1:19999/callback";
+const canonicalResource = (): string => `${base}/mcp`;
 
 beforeAll(async () => {
   isolateStateDir();
@@ -42,7 +43,8 @@ async function authorizeWithPairing(
   clientId: string,
   challenge: string,
   pairingCode: string,
-  state = "st-123"
+  state = "st-123",
+  resource = canonicalResource()
 ): Promise<{ code: string | null; location: string | null; page?: string; status?: number }> {
   const authorizeUrl = new URL(`${base}/oauth/authorize`);
   authorizeUrl.searchParams.set("client_id", clientId);
@@ -52,6 +54,7 @@ async function authorizeWithPairing(
   authorizeUrl.searchParams.set("code_challenge", challenge);
   authorizeUrl.searchParams.set("code_challenge_method", "S256");
   authorizeUrl.searchParams.set("scope", "workspace.read workspace.search git.read execution.read offline_access");
+  authorizeUrl.searchParams.set("resource", resource);
 
   const pageResponse = await fetch(authorizeUrl, { redirect: "manual" });
   const html = await pageResponse.text();
@@ -75,18 +78,21 @@ async function authorizeWithPairing(
 async function exchangeToken(
   clientId: string,
   code: string,
-  verifier: string
+  verifier: string,
+  resource: string | null = canonicalResource()
 ): Promise<{ status: number; body: Record<string, string> }> {
+  const body = new URLSearchParams({
+    grant_type: "authorization_code",
+    code,
+    code_verifier: verifier,
+    client_id: clientId,
+    redirect_uri: REDIRECT_URI,
+  });
+  if (resource !== null) body.set("resource", resource);
   const response = await fetch(`${base}/oauth/token`, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      grant_type: "authorization_code",
-      code,
-      code_verifier: verifier,
-      client_id: clientId,
-      redirect_uri: REDIRECT_URI,
-    }),
+    body,
   });
   return { status: response.status, body: (await response.json()) as Record<string, string> };
 }
@@ -106,6 +112,7 @@ describe("discovery metadata", () => {
     expect(body.code_challenge_methods_supported).toEqual(["S256"]);
     expect(body.grant_types_supported).toEqual(["authorization_code", "refresh_token"]);
     expect(body.registration_endpoint).toContain("/oauth/register");
+    expect(body.token_endpoint_auth_methods_supported).toEqual(["none"]);
   });
 });
 
@@ -179,6 +186,7 @@ describe("authorization + token flow", () => {
       authorizeUrl.searchParams.set("response_type", "code");
       authorizeUrl.searchParams.set("code_challenge", challenge);
       authorizeUrl.searchParams.set("code_challenge_method", "S256");
+      authorizeUrl.searchParams.set("resource", `${xssBase}/mcp`);
 
       const response = await fetch(authorizeUrl, { redirect: "manual" });
       expect(response.status).toBe(200);
@@ -201,6 +209,7 @@ describe("authorization + token flow", () => {
     authorizeUrl.searchParams.set("response_type", "code");
     authorizeUrl.searchParams.set("code_challenge", challenge);
     authorizeUrl.searchParams.set("code_challenge_method", "S256");
+    authorizeUrl.searchParams.set("resource", canonicalResource());
 
     const response = await fetch(authorizeUrl, { redirect: "manual" });
     expect(response.status).toBe(200);
@@ -232,6 +241,85 @@ describe("authorization + token flow", () => {
     expect(first.status).toBe(200);
     const second = await exchangeToken(clientId, code!, verifier);
     expect(second.status).toBe(400);
+  });
+
+  it("binds the authorization code to the canonical resource and exchanges it for that resource", async () => {
+    const clientId = await registerClient();
+    const { verifier, challenge } = pkceVerifierAndChallenge();
+    const pairing = bridge.pairing.create();
+    const { code } = await authorizeWithPairing(clientId, challenge, pairing.code);
+
+    const token = await exchangeToken(clientId, code!, verifier, canonicalResource());
+
+    expect(token.status).toBe(200);
+    const verified = bridge.authStore.verifyAccessToken(token.body.access_token);
+    expect(verified.ok).toBe(true);
+    if (verified.ok) expect(verified.record.resource).toBe(canonicalResource());
+  });
+
+  it("rejects an authorization request without the canonical resource", async () => {
+    const clientId = await registerClient();
+    const { challenge } = pkceVerifierAndChallenge();
+    const authorizeUrl = new URL(`${base}/oauth/authorize`);
+    authorizeUrl.searchParams.set("client_id", clientId);
+    authorizeUrl.searchParams.set("redirect_uri", REDIRECT_URI);
+    authorizeUrl.searchParams.set("response_type", "code");
+    authorizeUrl.searchParams.set("code_challenge", challenge);
+    authorizeUrl.searchParams.set("code_challenge_method", "S256");
+
+    const response = await fetch(authorizeUrl, { redirect: "manual" });
+
+    expect(response.status).toBe(302);
+    expect(response.headers.get("location")).toContain("error=invalid_target");
+  });
+
+  it("rejects an authorization request for a different resource", async () => {
+    const clientId = await registerClient();
+    const { challenge } = pkceVerifierAndChallenge();
+    const authorizeUrl = new URL(`${base}/oauth/authorize`);
+    authorizeUrl.searchParams.set("client_id", clientId);
+    authorizeUrl.searchParams.set("redirect_uri", REDIRECT_URI);
+    authorizeUrl.searchParams.set("response_type", "code");
+    authorizeUrl.searchParams.set("code_challenge", challenge);
+    authorizeUrl.searchParams.set("code_challenge_method", "S256");
+    authorizeUrl.searchParams.set("resource", `${base}/another-resource`);
+
+    const response = await fetch(authorizeUrl, { redirect: "manual" });
+
+    expect(response.status).toBe(302);
+    expect(response.headers.get("location")).toContain("error=invalid_target");
+  });
+
+  it("rejects a token request with no resource and issues no tokens", async () => {
+    const clientId = await registerClient();
+    const { verifier, challenge } = pkceVerifierAndChallenge();
+    const pairing = bridge.pairing.create();
+    const { code } = await authorizeWithPairing(clientId, challenge, pairing.code);
+    const before = bridge.authStore.tokenCount();
+
+    const token = await exchangeToken(clientId, code!, verifier, null);
+
+    expect(token.status).toBe(400);
+    expect(token.body.error).toBe("invalid_request");
+    expect(token.body.access_token).toBeUndefined();
+    expect(token.body.refresh_token).toBeUndefined();
+    expect(bridge.authStore.tokenCount()).toBe(before);
+  });
+
+  it("rejects a token request for a different resource and issues no tokens", async () => {
+    const clientId = await registerClient();
+    const { verifier, challenge } = pkceVerifierAndChallenge();
+    const pairing = bridge.pairing.create();
+    const { code } = await authorizeWithPairing(clientId, challenge, pairing.code);
+    const before = bridge.authStore.tokenCount();
+
+    const token = await exchangeToken(clientId, code!, verifier, `${base}/another-resource`);
+
+    expect(token.status).toBe(400);
+    expect(token.body.error).toBe("invalid_target");
+    expect(token.body.access_token).toBeUndefined();
+    expect(token.body.refresh_token).toBeUndefined();
+    expect(bridge.authStore.tokenCount()).toBe(before);
   });
 
   it("requires PKCE at the authorization endpoint", async () => {
@@ -282,6 +370,7 @@ describe("token enforcement on /mcp", () => {
     const expired = bridge.authStore.issueTokens({
       clientId: "test",
       scopes: ["workspace.read"],
+      resource: canonicalResource(),
       accessTtlMs: -1000,
     });
     const response = await mcpCall(expired.accessToken);
@@ -292,6 +381,7 @@ describe("token enforcement on /mcp", () => {
     const foreign = bridge.authStore.issueTokens({
       clientId: "test",
       scopes: ["workspace.read"],
+      resource: canonicalResource(),
       workspaceId: "deadbeef0000",
     });
     const response = await mcpCall(foreign.accessToken);
@@ -299,10 +389,34 @@ describe("token enforcement on /mcp", () => {
   });
 
   it("401 after revocation", async () => {
-    const tokens = bridge.authStore.issueTokens({ clientId: "test", scopes: ["workspace.read"] });
+    const tokens = bridge.authStore.issueTokens({
+      clientId: "test",
+      scopes: ["workspace.read"],
+      resource: canonicalResource(),
+    });
     expect((await mcpCall(tokens.accessToken)).status).toBe(200);
     bridge.authStore.revokeToken(tokens.accessToken);
     expect((await mcpCall(tokens.accessToken)).status).toBe(401);
+  });
+
+  it("accepts a token bound to the canonical MCP resource", async () => {
+    const tokens = bridge.authStore.issueTokens({
+      clientId: "test",
+      scopes: ["workspace.read"],
+      resource: canonicalResource(),
+    });
+
+    expect((await mcpCall(tokens.accessToken)).status).toBe(200);
+  });
+
+  it("rejects a token bound to a different MCP resource", async () => {
+    const tokens = bridge.authStore.issueTokens({
+      clientId: "test",
+      scopes: ["workspace.read"],
+      resource: `${base}/another-resource`,
+    });
+
+    expect((await mcpCall(tokens.accessToken)).status).toBe(403);
   });
 });
 
@@ -314,11 +428,20 @@ describe("refresh token rotation", () => {
     const { code } = await authorizeWithPairing(clientId, challenge, pairing.code);
     const initial = await exchangeToken(clientId, code!, verifier);
 
-    const refresh = async (refreshToken: string): Promise<{ status: number; body: Record<string, string> }> => {
+    const refresh = async (
+      refreshToken: string,
+      resource: string | null = null
+    ): Promise<{ status: number; body: Record<string, string> }> => {
+      const body = new URLSearchParams({
+        grant_type: "refresh_token",
+        refresh_token: refreshToken,
+        client_id: clientId,
+      });
+      if (resource !== null) body.set("resource", resource);
       const response = await fetch(`${base}/oauth/token`, {
         method: "POST",
         headers: { "content-type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: refreshToken, client_id: clientId }),
+        body,
       });
       return { status: response.status, body: (await response.json()) as Record<string, string> };
     };
@@ -329,5 +452,65 @@ describe("refresh token rotation", () => {
 
     const replayed = await refresh(initial.body.refresh_token);
     expect(replayed.status).toBe(400);
+  });
+
+  it("preserves the resource across refresh rotation", async () => {
+    const clientId = await registerClient();
+    const { verifier, challenge } = pkceVerifierAndChallenge();
+    const pairing = bridge.pairing.create();
+    const { code } = await authorizeWithPairing(clientId, challenge, pairing.code);
+    const initial = await exchangeToken(clientId, code!, verifier);
+
+    const response = await fetch(`${base}/oauth/token`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "refresh_token",
+        refresh_token: initial.body.refresh_token,
+        client_id: clientId,
+        resource: canonicalResource(),
+      }),
+    });
+    const rotated = (await response.json()) as Record<string, string>;
+    const verified = bridge.authStore.verifyAccessToken(rotated.access_token);
+
+    expect(response.status).toBe(200);
+    expect(verified.ok).toBe(true);
+    if (verified.ok) expect(verified.record.resource).toBe(canonicalResource());
+  });
+
+  it("rejects refresh attempts for a different resource without rotating the token", async () => {
+    const clientId = await registerClient();
+    const { verifier, challenge } = pkceVerifierAndChallenge();
+    const pairing = bridge.pairing.create();
+    const { code } = await authorizeWithPairing(clientId, challenge, pairing.code);
+    const initial = await exchangeToken(clientId, code!, verifier);
+
+    const mismatched = await fetch(`${base}/oauth/token`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "refresh_token",
+        refresh_token: initial.body.refresh_token,
+        client_id: clientId,
+        resource: `${base}/another-resource`,
+      }),
+    });
+    const mismatchBody = (await mismatched.json()) as Record<string, string>;
+
+    expect(mismatched.status).toBe(400);
+    expect(mismatchBody.error).toBe("invalid_target");
+
+    const valid = await fetch(`${base}/oauth/token`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "refresh_token",
+        refresh_token: initial.body.refresh_token,
+        client_id: clientId,
+        resource: canonicalResource(),
+      }),
+    });
+    expect(valid.status).toBe(200);
   });
 });

@@ -21,7 +21,7 @@ interface PendingAuthRequest {
   scopes: string[];
   state?: string;
   codeChallenge: string;
-  resource?: string;
+  resource: string;
   expiresAt: number;
 }
 
@@ -221,6 +221,11 @@ export function createOAuthRouter(deps: OAuthDeps): Router {
       fail("invalid_request", "PKCE with S256 is required");
       return;
     }
+    const canonicalResource = `${deps.getBaseUrl(req)}/mcp`;
+    if (query.resource !== canonicalResource) {
+      fail("invalid_target", "resource must identify this MCP server");
+      return;
+    }
     const scopes = filterScopes(query.scope);
     const request: PendingAuthRequest = {
       id: randomBytes(16).toString("hex"),
@@ -229,7 +234,7 @@ export function createOAuthRouter(deps: OAuthDeps): Router {
       scopes,
       state: query.state,
       codeChallenge: query.code_challenge,
-      resource: query.resource,
+      resource: canonicalResource,
       expiresAt: Date.now() + 10 * 60_000,
     };
     pendingRequests.set(request.id, request);
@@ -296,8 +301,14 @@ export function createOAuthRouter(deps: OAuthDeps): Router {
     const grantType = body.grant_type;
 
     if (grantType === "authorization_code") {
-      const { code, code_verifier: codeVerifier, client_id: clientId, redirect_uri: redirectUri } = body;
-      if (!code || !codeVerifier || !clientId) {
+      const {
+        code,
+        code_verifier: codeVerifier,
+        client_id: clientId,
+        redirect_uri: redirectUri,
+        resource,
+      } = body;
+      if (!code || !codeVerifier || !clientId || !redirectUri || !resource) {
         res.status(400).json({ error: "invalid_request" });
         return;
       }
@@ -306,8 +317,12 @@ export function createOAuthRouter(deps: OAuthDeps): Router {
         res.status(400).json({ error: "invalid_grant" });
         return;
       }
-      if (redirectUri && redirectUri !== record.redirectUri) {
+      if (redirectUri !== record.redirectUri) {
         res.status(400).json({ error: "invalid_grant", error_description: "redirect_uri mismatch" });
+        return;
+      }
+      if (resource !== record.resource) {
+        res.status(400).json({ error: "invalid_target", error_description: "resource mismatch" });
         return;
       }
       if (!safeEqual(base64UrlSha256(codeVerifier), record.codeChallenge)) {
@@ -315,7 +330,7 @@ export function createOAuthRouter(deps: OAuthDeps): Router {
         res.status(400).json({ error: "invalid_grant", error_description: "PKCE verification failed" });
         return;
       }
-      const tokens = deps.store.issueTokens({ clientId, scopes: record.scopes });
+      const tokens = deps.store.issueTokens({ clientId, scopes: record.scopes, resource: record.resource });
       deps.logger.info(`Issued access token for client ${clientId}`);
       res.json({
         access_token: tokens.accessToken,
@@ -328,12 +343,12 @@ export function createOAuthRouter(deps: OAuthDeps): Router {
     }
 
     if (grantType === "refresh_token") {
-      const { refresh_token: refreshToken, client_id: clientId } = body;
+      const { refresh_token: refreshToken, client_id: clientId, resource } = body;
       if (!refreshToken || !clientId) {
         res.status(400).json({ error: "invalid_request" });
         return;
       }
-      const result = deps.store.refresh(refreshToken, clientId);
+      const result = deps.store.refresh(refreshToken, clientId, resource);
       if (!result.ok) {
         res.status(400).json({ error: result.reason });
         return;

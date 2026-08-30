@@ -28,7 +28,7 @@ export interface AuthorizationCodeRecord {
   scopes: string[];
   workspaceId: string;
   pairingSessionId: string;
-  resource?: string;
+  resource: string;
   expiresAt: number;
 }
 
@@ -37,6 +37,7 @@ export interface TokenRecord {
   kind: "access" | "refresh";
   clientId: string;
   workspaceId: string;
+  resource: string;
   scopes: string[];
   issuedAt: number;
   expiresAt: number;
@@ -136,7 +137,7 @@ export class AuthStore {
     codeChallenge: string;
     scopes: string[];
     pairingSessionId: string;
-    resource?: string;
+    resource: string;
   }): string {
     const code = newToken("c2c_ac");
     this.authCodes.set(code, {
@@ -167,6 +168,7 @@ export class AuthStore {
   issueTokens(input: {
     clientId: string;
     scopes: string[];
+    resource: string;
     workspaceId?: string;
     accessTtlMs?: number;
   }): { accessToken: string; refreshToken: string | null; expiresIn: number; scopes: string[] } {
@@ -180,6 +182,7 @@ export class AuthStore {
       kind: "access",
       clientId: input.clientId,
       workspaceId,
+      resource: input.resource,
       scopes: input.scopes,
       issuedAt: now,
       expiresAt: now + accessTtl,
@@ -194,6 +197,7 @@ export class AuthStore {
         kind: "refresh",
         clientId: input.clientId,
         workspaceId,
+        resource: input.resource,
         scopes: input.scopes,
         issuedAt: now,
         expiresAt: now + REFRESH_TOKEN_TTL_MS,
@@ -221,18 +225,21 @@ export class AuthStore {
   /** Refresh-token rotation: old refresh token is revoked, a new pair is issued. */
   refresh(
     refreshToken: string,
-    clientId: string
+    clientId: string,
+    resource?: string
   ): { ok: true; tokens: ReturnType<AuthStore["issueTokens"]> } | { ok: false; reason: string } {
     const record = this.tokens.get(sha256hex(refreshToken));
     if (!record || record.kind !== "refresh") return { ok: false, reason: "invalid_grant" };
     if (record.revoked) return { ok: false, reason: "invalid_grant" };
     if (Date.now() > record.expiresAt) return { ok: false, reason: "invalid_grant" };
     if (record.clientId !== clientId) return { ok: false, reason: "invalid_client" };
+    if (resource !== undefined && resource !== record.resource) return { ok: false, reason: "invalid_target" };
     record.revoked = true;
     this.tokens.delete(record.hash);
     const tokens = this.issueTokens({
       clientId,
       scopes: record.scopes,
+      resource: record.resource,
       workspaceId: record.workspaceId,
     });
     return { ok: true, tokens };
