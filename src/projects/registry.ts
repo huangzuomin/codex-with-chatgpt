@@ -1,10 +1,16 @@
 import fs from "node:fs";
 import path from "node:path";
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { projectsFile } from "../config/paths.js";
-import { ProjectRegistrySchema, type Project, type ProjectRegistry } from "./types.js";
+import {
+  ProjectIdSchema,
+  ProjectRegistrySchema,
+  type AddProjectInput,
+  type ProjectDefinition,
+  type ProjectRegistry,
+} from "./types.js";
 
-const emptyRegistry = (): ProjectRegistry => ({ version: 1, activeProjectId: null, projects: [] });
+const emptyRegistry = (): ProjectRegistry => ({ version: 1, projects: {} });
 
 function readRegistry(): ProjectRegistry {
   const file = projectsFile();
@@ -15,13 +21,17 @@ function readRegistry(): ProjectRegistry {
   } catch {
     throw new Error(`Project registry is not valid JSON: ${file}`);
   }
+  if (typeof value === "object" && value !== null && "version" in value && value.version !== 1) {
+    throw new Error(`Unsupported project registry version: ${String(value.version)}`);
+  }
   const parsed = ProjectRegistrySchema.safeParse(value);
   if (!parsed.success) throw new Error(`Project registry is invalid: ${file}`);
   return parsed.data;
 }
 
 function writeRegistry(registry: ProjectRegistry): void {
-  const checked = ProjectRegistrySchema.parse(registry);
+  const projects = Object.fromEntries(Object.entries(registry.projects).sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0));
+  const checked = ProjectRegistrySchema.parse({ version: 1, projects });
   const file = projectsFile();
   const temp = `${file}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
   fs.writeFileSync(temp, `${JSON.stringify(checked, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
@@ -41,49 +51,55 @@ function canonicalRoot(rootInput: string): string {
   return fs.realpathSync.native(resolved);
 }
 
-function projectId(root: string): string {
-  return `project_${createHash("sha256").update(process.platform === "win32" ? root.toLowerCase() : root).digest("hex").slice(0, 12)}`;
+function rootKey(root: string): string {
+  return process.platform === "win32" ? root.toLowerCase() : root;
 }
 
-export function listProjects(): Project[] {
-  return readRegistry().projects;
+function validateProjectId(id: string): string {
+  const parsed = ProjectIdSchema.safeParse(id);
+  if (!parsed.success) throw new Error("Project id must match ^[a-z0-9][a-z0-9-]{0,63}$");
+  return parsed.data;
 }
 
-export function getProject(id: string): Project | null {
-  return readRegistry().projects.find((project) => project.id === id) ?? null;
-}
-
-export function addProject(rootInput: string, nameInput?: string): Project {
-  const root = canonicalRoot(rootInput);
+export function listProjects(): ProjectDefinition[] {
   const registry = readRegistry();
-  if (registry.projects.some((project) => project.root === root)) throw new Error(`Project is already registered: ${root}`);
-  const project: Project = {
-    id: projectId(root),
-    name: nameInput?.trim() || path.basename(root),
-    root,
-    registeredAt: new Date().toISOString(),
-    lastUsedAt: null,
-  };
-  registry.projects.push(project);
-  writeRegistry(registry);
-  return project;
+  return Object.keys(registry.projects).sort().map((id) => registry.projects[id]);
 }
 
-export function setActiveProject(id: string): Project {
+export function getProject(idInput: string): ProjectDefinition {
+  const id = validateProjectId(idInput);
   const registry = readRegistry();
-  const project = registry.projects.find((item) => item.id === id);
+  const project = registry.projects[id];
   if (!project) throw new Error(`Project is not registered: ${id}`);
-  project.lastUsedAt = new Date().toISOString();
-  registry.activeProjectId = id;
+  return project;
+}
+
+export function addProject(input: AddProjectInput): ProjectDefinition {
+  const id = validateProjectId(input.id);
+  if (!input.displayName.trim()) throw new Error("Project display name must not be empty");
+  if (input.repo !== undefined && !input.repo.trim()) throw new Error("Project repo must not be empty");
+  const workspaceRoot = canonicalRoot(input.workspaceRoot);
+  const registry = readRegistry();
+  if (registry.projects[id]) throw new Error(`Project id is already registered: ${id}`);
+  if (Object.values(registry.projects).some((project) => rootKey(project.workspaceRoot) === rootKey(workspaceRoot))) {
+    throw new Error(`Project workspace is already registered: ${workspaceRoot}`);
+  }
+  const project: ProjectDefinition = {
+    id,
+    displayName: input.displayName,
+    workspaceRoot,
+    ...(input.repo === undefined ? {} : { repo: input.repo }),
+    enabled: true,
+  };
+  registry.projects[id] = project;
   writeRegistry(registry);
   return project;
 }
 
-export function removeProject(id: string): void {
+export function removeProject(idInput: string): void {
+  const id = validateProjectId(idInput);
   const registry = readRegistry();
-  if (registry.activeProjectId === id) throw new Error("Cannot remove the active project; select another project first");
-  const count = registry.projects.length;
-  registry.projects = registry.projects.filter((project) => project.id !== id);
-  if (registry.projects.length === count) throw new Error(`Project is not registered: ${id}`);
+  if (!registry.projects[id]) throw new Error(`Project is not registered: ${id}`);
+  delete registry.projects[id];
   writeRegistry(registry);
 }

@@ -27,7 +27,7 @@ import {
 } from "../tunnel/state.js";
 import { Logger } from "../logger/index.js";
 import { getStateDir } from "../config/paths.js";
-import { addProject, listProjects, removeProject, setActiveProject } from "../projects/registry.js";
+import { addProject, getProject, listProjects, removeProject } from "../projects/registry.js";
 import { ensureSandboxAllowlist, getCodexConfigPath, isStateDirAllowlisted } from "../config/sandbox-allow.js";
 import {
   CHATGPT_CREATE_CONNECTOR_URL,
@@ -725,35 +725,40 @@ projects
       return;
     }
     if (data.length === 0) say("暂无已注册项目。");
-    for (const project of data) say(`${project.id}  ${project.name}  ${project.root}`);
+    for (const project of data) say(`${project.id}  ${project.displayName}  ${project.workspaceRoot}`);
   });
 
 projects
-  .command("add <path>")
+  .command("add")
   .description("Register a workspace directory")
-  .option("--name <name>", "display name")
-  .option("--use", "make this project active", false)
+  .requiredOption("--id <project-id>", "stable project id")
+  .requiredOption("--name <display-name>", "display name")
+  .requiredOption("--path <workspace-path>", "workspace directory")
+  .option("--repo <repository>", "repository reference")
   .option("--json", "machine-readable output", false)
-  .action((root: string, opts: { name?: string; use: boolean; json: boolean }) => {
+  .action((opts: { id: string; name: string; path: string; repo?: string; json: boolean }) => {
     try {
-      const project = addProject(root, opts.name);
-      if (opts.use) setActiveProject(project.id);
-      if (opts.json) say(JSON.stringify({ ok: true, project, active: opts.use }));
-      else check(`已注册项目：${project.name}（${project.id}）`);
+      const project = addProject({ id: opts.id, displayName: opts.name, workspaceRoot: opts.path, repo: opts.repo });
+      if (opts.json) say(JSON.stringify({ ok: true, project }));
+      else check(`已注册项目：${project.displayName}（${project.id}）`);
     } catch (error) {
       handleCliError(error, opts.json);
     }
   });
 
 projects
-  .command("use <id>")
-  .description("Select the active workspace")
+  .command("show <project-id>")
+  .description("Show one registered workspace")
   .option("--json", "machine-readable output", false)
   .action((id: string, opts: { json: boolean }) => {
     try {
-      const project = setActiveProject(id);
+      const project = getProject(id);
       if (opts.json) say(JSON.stringify({ ok: true, project }));
-      else check(`当前项目：${project.name}`);
+      else {
+        say(`项目：${project.displayName}（${project.id}）`);
+        say(`路径：${project.workspaceRoot}`);
+        if (project.repo) say(`仓库：${project.repo}`);
+      }
     } catch (error) {
       handleCliError(error, opts.json);
     }
@@ -762,14 +767,12 @@ projects
 projects
   .command("remove <id>")
   .description("Unregister a workspace without deleting it")
-  .option("--json", "machine-readable output", false)
-  .action((id: string, opts: { json: boolean }) => {
+  .action((id: string) => {
     try {
       removeProject(id);
-      if (opts.json) say(JSON.stringify({ ok: true, removed: id }));
-      else check(`已取消注册项目：${id}`);
+      check(`已取消注册项目：${id}`);
     } catch (error) {
-      handleCliError(error, opts.json);
+      handleCliError(error, false);
     }
   });
 
